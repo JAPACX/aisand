@@ -105,7 +105,7 @@ func (m *MainModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *MainModel) View() string {
 	if m.width == 0 {
-		return "Loading..."
+		return TitleStyle.Render("aisand") + "\n\n" + MutedStyle.Render("Loading...")
 	}
 
 	leftWidth := int(float64(m.width) * LeftPanelRatio)
