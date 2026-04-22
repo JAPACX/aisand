@@ -10,7 +10,7 @@ import (
 	"github.com/japacx/aisand/internal/ui"
 )
 
-const version = "0.1.6"
+const version = "0.1.7"
 
 func main() {
 	versionFlag := flag.Bool("version", false, "Print version and exit")
