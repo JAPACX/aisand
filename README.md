@@ -42,9 +42,29 @@ aisand wraps [limactl](https://github.com/lima-vm/lima) — the macOS VM manager
 - **Full VM lifecycle** — create, start, stop, delete, shell access — all from the keyboard
 - **Real-time log streaming** — watch VM creation and tool installation output line by line
 - **Tool installation** — install [OpenCode](https://opencode.ai) inside any VM with one keypress
+- **Zero credential setup** — API keys and config are shared automatically via symlinks from your Mac into the VM (read below)
 - **Host directory mounts** — share folders from your Mac into VMs (read-only by default)
 - **Host setup included** — detects missing Homebrew or Lima and offers to install them
 - **Embedded assets** — Lima template and scripts are compiled into the binary
+
+---
+
+## How credentials are shared
+
+When you install OpenCode inside a VM via aisand, the installation script automatically creates two symlinks inside the VM pointing back to your Mac's config via the virtiofs host mount:
+
+```
+~/.config/opencode          → /Users/<you>/.config/opencode
+~/.local/share/opencode/auth.json  → /Users/<you>/.local/share/opencode/auth.json
+```
+
+This means:
+
+- **You never copy API keys into the VM** — the VM reads them directly from your Mac
+- **Every VM you create shares the same credentials** — configure once on your Mac, all VMs pick it up automatically
+- **The VM cannot modify your config** — the host home mount is read-only
+
+The net result: open a shell inside any VM and run `opencode` — it is already authenticated with your API keys, no extra setup needed.
 
 ---
 
