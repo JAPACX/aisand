@@ -141,11 +141,21 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case setupStateCheck, setupStateConfirm:
 		switch msg.String() {
-		case "y", "Y", "enter":
+		case "y", "Y":
 			m.subState = setupStateInstalling
 			m.installError = ""
 			return m, tea.Batch(m.spinner.Tick, m.runInstall())
-		case "n", "N", "q", "esc":
+		case "n", "N", "q":
+			return m, tea.Quit
+		case "esc":
+			// If we got here from global menu (both installed), go back to main
+			// If neither installed, quit
+			if !m.brewMissing && !m.limaMissing {
+				main := NewMainModel(m.client, m.width, m.height)
+				return m, func() tea.Msg {
+					return ChangeScreenMsg{State: StateMain, Screen: main}
+				}
+			}
 			return m, tea.Quit
 		}
 
