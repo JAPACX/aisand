@@ -17,30 +17,34 @@ else
   ok "opencode installed"
 fi
 
-# ── Config symlinks ──────────────────────────────────────────────────────────
-HOST_HOME=$(ls /Users 2>/dev/null | head -1)
-if [ -n "$HOST_HOME" ]; then
-  CONFIG_SRC="/Users/$HOST_HOME/.config/opencode"
-  CONFIG_DST="$HOME/.config/opencode"
-  if [ -L "$CONFIG_DST" ]; then
-    ok "symlink ok: $CONFIG_DST"
-  else
-    mkdir -p "$(dirname "$CONFIG_DST")"
-    ln -sf "$CONFIG_SRC" "$CONFIG_DST"
-    ok "symlink created: $CONFIG_DST → $CONFIG_SRC"
-  fi
-
-  AUTH_SRC="/Users/$HOST_HOME/.local/share/opencode/auth.json"
-  AUTH_DST="$HOME/.local/share/opencode/auth.json"
-  if [ -L "$AUTH_DST" ]; then
-    ok "symlink ok: $AUTH_DST"
-  else
-    mkdir -p "$(dirname "$AUTH_DST")"
-    ln -sf "$AUTH_SRC" "$AUTH_DST"
-    ok "symlink created: $AUTH_DST → $AUTH_SRC"
-  fi
+# ── Config symlinks (skipped if SKIP_SYMLINKS=1) ─────────────────────────────
+if [ "${SKIP_SYMLINKS:-0}" = "1" ]; then
+  ok "Skipping host config symlinks"
 else
-  echo "Warning: Could not detect host username from /Users"
+  HOST_HOME=$(ls /Users 2>/dev/null | head -1)
+  if [ -n "$HOST_HOME" ]; then
+    CONFIG_SRC="/Users/$HOST_HOME/.config/opencode"
+    CONFIG_DST="$HOME/.config/opencode"
+    if [ -L "$CONFIG_DST" ]; then
+      ok "symlink ok: $CONFIG_DST"
+    else
+      mkdir -p "$(dirname "$CONFIG_DST")"
+      ln -sf "$CONFIG_SRC" "$CONFIG_DST"
+      ok "symlink created: $CONFIG_DST → $CONFIG_SRC"
+    fi
+
+    AUTH_SRC="/Users/$HOST_HOME/.local/share/opencode/auth.json"
+    AUTH_DST="$HOME/.local/share/opencode/auth.json"
+    if [ -L "$AUTH_DST" ]; then
+      ok "symlink ok: $AUTH_DST"
+    else
+      mkdir -p "$(dirname "$AUTH_DST")"
+      ln -sf "$AUTH_SRC" "$AUTH_DST"
+      ok "symlink created: $AUTH_DST → $AUTH_SRC"
+    fi
+  else
+    echo "Warning: Could not detect host username from /Users"
+  fi
 fi
 
 ok "opencode setup complete"

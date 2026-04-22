@@ -12,9 +12,10 @@ import (
 
 // tool describes an installable tool bundle.
 type tool struct {
-	name        string
-	description string
-	script      func() []byte // returns the script to pipe to bash -s
+	name           string
+	description    string
+	script         func() []byte // returns the script to pipe to bash -s
+	askSymlinks    bool          // if true, ask user about host config symlinks before installing
 }
 
 // availableTools is the registry of installable tools.
@@ -26,8 +27,9 @@ var availableTools = []tool{
 	},
 	{
 		name:        "opencode",
-		description: "AI coding agent (curl install + config symlinks)",
+		description: "AI coding agent (curl install + optional config symlinks)",
 		script:      func() []byte { return embed.OpenCodeScript },
+		askSymlinks: true,
 	},
 }
 
@@ -39,7 +41,7 @@ type ToolPickerModel struct {
 	client   *lima.Client
 	vm       lima.VM
 	tools    []tool
-	status   map[string]bool // true = installed
+	status   map[string]bool
 	loading  bool
 	selected int
 	width    int
@@ -122,7 +124,6 @@ func (m *ToolPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "enter":
-			// Block if already installed
 			if m.status[m.tools[m.selected].name] {
 				return m, nil
 			}
@@ -139,34 +140,91 @@ func (m *ToolPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *ToolPickerModel) executeTool() (tea.Model, tea.Cmd) {
 	t := m.tools[m.selected]
-	installCmd := m.client.InstallTool(m.vm.Name, t.script())
+
+	// If this tool asks about symlinks, show the confirm dialog first
+	if t.askSymlinks {
+		return m.askSymlinksConfirm(t)
+	}
+
+	return m.runTool(t, t.script())
+}
+
+// askSymlinksConfirm shows a confirmation dialog asking whether to import host config.
+func (m *ToolPickerModel) askSymlinksConfirm(t tool) (tea.Model, tea.Cmd) {
 	client := m.client
 	vm := m.vm
 	width := m.width
 	height := m.height
+
+	confirm := NewConfirmModel(
+		"Import host configuration via symlinks?\n\nThis will link your Mac's OpenCode config and auth\ninto the VM so you don't need to re-authenticate:\n\n  ~/.config/opencode → /Users/<you>/.config/opencode\n  ~/.local/share/opencode/auth.json → /Users/<you>/...",
+		// Y — install with symlinks (default script)
+		func() tea.Msg {
+			installCmd := client.InstallTool(vm.Name, t.script())
+			logView := NewLogViewModel(
+				client, installCmd,
+				fmt.Sprintf("Installing %s on %s...", t.name, vm.Name),
+				width, height,
+				func(exitCode int) tea.Msg {
+					return reloadActionMenu(client, vm, width, height)
+				},
+			)
+			return ChangeScreenMsg{State: StateLogView, Screen: logView}
+		},
+		// N — install without symlinks (prepend SKIP_SYMLINKS=1)
+		func() tea.Msg {
+			script := append([]byte("export SKIP_SYMLINKS=1\n"), t.script()...)
+			installCmd := client.InstallTool(vm.Name, script)
+			logView := NewLogViewModel(
+				client, installCmd,
+				fmt.Sprintf("Installing %s on %s...", t.name, vm.Name),
+				width, height,
+				func(exitCode int) tea.Msg {
+					return reloadActionMenu(client, vm, width, height)
+				},
+			)
+			return ChangeScreenMsg{State: StateLogView, Screen: logView}
+		},
+	)
+	return m, func() tea.Msg {
+		return ChangeScreenMsg{State: StateConfirm, Screen: confirm}
+	}
+}
+
+// runTool launches the install log view for the given tool and script.
+func (m *ToolPickerModel) runTool(t tool, script []byte) (tea.Model, tea.Cmd) {
+	client := m.client
+	vm := m.vm
+	width := m.width
+	height := m.height
+	installCmd := client.InstallTool(vm.Name, script)
 	logView := NewLogViewModel(
-		m.client, installCmd,
-		fmt.Sprintf("Installing %s on %s...", t.name, m.vm.Name),
-		m.width, m.height,
+		client, installCmd,
+		fmt.Sprintf("Installing %s on %s...", t.name, vm.Name),
+		width, height,
 		func(exitCode int) tea.Msg {
-			// Reload VM and go back to action menu
-			vms, err := client.ListVMs()
-			updatedVM := vm
-			if err == nil {
-				for _, v := range vms {
-					if v.Name == vm.Name {
-						updatedVM = v
-						break
-					}
-				}
-			}
-			action := NewActionMenuModel(client, updatedVM, width, height)
-			return ChangeScreenMsg{State: StateActionMenu, Screen: action}
+			return reloadActionMenu(client, vm, width, height)
 		},
 	)
 	return m, func() tea.Msg {
 		return ChangeScreenMsg{State: StateLogView, Screen: logView}
 	}
+}
+
+// reloadActionMenu reloads the VM from limactl and returns to the action menu.
+func reloadActionMenu(client *lima.Client, vm lima.VM, width, height int) tea.Msg {
+	vms, err := client.ListVMs()
+	updatedVM := vm
+	if err == nil {
+		for _, v := range vms {
+			if v.Name == vm.Name {
+				updatedVM = v
+				break
+			}
+		}
+	}
+	action := NewActionMenuModel(client, updatedVM, width, height)
+	return ChangeScreenMsg{State: StateActionMenu, Screen: action}
 }
 
 func (m *ToolPickerModel) View() string {
@@ -183,9 +241,9 @@ func (m *ToolPickerModel) View() string {
 		installed, checked := m.status[t.name]
 		var badge string
 		if !checked {
-			badge = MutedStyle.Render("[ ? ]")
+			badge = MutedStyle.Render("[ ?             ]")
 		} else if installed {
-			badge = RunningBadgeStyle.Render("[✓ installed]")
+			badge = RunningBadgeStyle.Render("[✓ installed    ]")
 		} else {
 			badge = MutedStyle.Render("[ not installed ]")
 		}
@@ -202,7 +260,7 @@ func (m *ToolPickerModel) View() string {
 
 	b.WriteString("\n" + StatusBarStyle.Width(m.width).Render(
 		KeyHintStyle.Render("↑↓")+" select  "+
-			KeyHintStyle.Render("enter")+" install/reinstall  "+
+			KeyHintStyle.Render("enter")+" install  "+
 			KeyHintStyle.Render("esc")+" back",
 	))
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -20,6 +21,9 @@ type logLineMsgLV struct{ line string }
 // processDoneMsg signals that the subprocess has exited.
 type processDoneMsg struct{ exitCode int }
 
+// elapsedTickMsg is sent every second to update the elapsed timer.
+type elapsedTickMsg struct{}
+
 // resumeLogViewMsg is sent when the user cancels the cancel-dialog and wants
 // to return to the running log view.
 type resumeLogViewMsg struct{ logView *LogViewModel }
@@ -29,6 +33,7 @@ type LogViewModel struct {
 	client     *lima.Client
 	cmd        *exec.Cmd
 	title      string
+	hint       string // optional context message shown below the title
 	vmName     string
 	isCreating bool
 	viewport   viewport.Model
@@ -36,6 +41,8 @@ type LogViewModel struct {
 	lines      []string
 	done       bool
 	exitCode   int
+	elapsed    int
+	startTime  time.Time
 	onDone     func(int) tea.Msg
 	width      int
 	height     int
@@ -65,6 +72,23 @@ func NewLogViewModel(client *lima.Client, cmd *exec.Cmd, title string, width, he
 	}
 }
 
+// NewLogViewModelWithHint creates a LogViewModel with an optional hint message.
+func NewLogViewModelWithHint(client *lima.Client, cmd *exec.Cmd, title, hint string, width, height int, onDone func(int) tea.Msg) *LogViewModel {
+	vp := viewport.New(width, height-6)
+	vp.SetContent("")
+	return &LogViewModel{
+		client:   client,
+		cmd:      cmd,
+		title:    title,
+		hint:     hint,
+		viewport: vp,
+		spinner:  newSpinner(),
+		onDone:   onDone,
+		width:    width,
+		height:   height,
+	}
+}
+
 // NewCreationLogViewModel creates a LogViewModel for VM creation with cancel support.
 func NewCreationLogViewModel(client *lima.Client, cmd *exec.Cmd, vmName string, width, height int, onDone func(int) tea.Msg) *LogViewModel {
 	vp := viewport.New(width, height-6)
@@ -73,6 +97,7 @@ func NewCreationLogViewModel(client *lima.Client, cmd *exec.Cmd, vmName string, 
 		client:     client,
 		cmd:        cmd,
 		title:      fmt.Sprintf("Creating VM %q...", vmName),
+		hint:       "This operation may take a moment, please wait.",
 		vmName:     vmName,
 		isCreating: true,
 		viewport:   vp,
@@ -83,10 +108,18 @@ func NewCreationLogViewModel(client *lima.Client, cmd *exec.Cmd, vmName string, 
 	}
 }
 
-// Init starts the subprocess, begins streaming output, and starts the spinner.
+func tickEverySecond() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return elapsedTickMsg{}
+	})
+}
+
+// Init starts the subprocess, begins streaming output, and starts the spinner + timer.
 func (m *LogViewModel) Init() tea.Cmd {
+	m.startTime = time.Now()
 	return tea.Batch(
 		m.spinner.Tick,
+		tickEverySecond(),
 		func() tea.Msg {
 			stdout, err := m.cmd.StdoutPipe()
 			if err != nil {
@@ -143,6 +176,13 @@ func (m *LogViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case elapsedTickMsg:
+		if !m.done {
+			m.elapsed = int(time.Since(m.startTime).Seconds())
+			return m, tickEverySecond()
+		}
+		return m, nil
+
 	case logLineMsgLV:
 		if msg.line != "" {
 			m.lines = append(m.lines, msg.line)
@@ -153,6 +193,7 @@ func (m *LogViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case processDoneMsg:
 		m.done = true
+		m.elapsed = int(time.Since(m.startTime).Seconds())
 		m.exitCode = msg.exitCode
 		return m, nil
 
@@ -212,14 +253,27 @@ func (m *LogViewModel) renderLines() string {
 	return b.String()
 }
 
+// fmtElapsed formats seconds into a human-readable string.
+func fmtElapsed(secs int) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds elapsed", secs)
+	}
+	return fmt.Sprintf("%dm%ds elapsed", secs/60, secs%60)
+}
+
 // View renders the log view.
 func (m *LogViewModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(TitleStyle.Render(m.title) + "\n\n")
+	b.WriteString(TitleStyle.Render(m.title) + "\n")
+
+	if m.hint != "" {
+		b.WriteString(MutedStyle.Render("ℹ  "+m.hint) + "\n")
+	}
+
+	b.WriteString("\n")
 
 	if !m.done && len(m.lines) == 0 {
-		// No output yet — show spinner while waiting
 		b.WriteString(m.spinner.View() + " " + MutedStyle.Render("Waiting for output...") + "\n")
 	} else {
 		b.WriteString(m.viewport.View() + "\n")
@@ -227,16 +281,21 @@ func (m *LogViewModel) View() string {
 
 	if m.done {
 		if m.exitCode == 0 {
-			b.WriteString("\n" + RunningBadgeStyle.Render("✓ Done. Press any key to continue.") + "\n")
+			b.WriteString("\n" + RunningBadgeStyle.Render(
+				fmt.Sprintf("✓ Done in %s. Press any key to continue.", fmtElapsed(m.elapsed)),
+			) + "\n")
 		} else {
-			b.WriteString("\n" + ErrorStyle.Render(fmt.Sprintf("✗ Failed (exit %d). Press any key to continue.", m.exitCode)) + "\n")
+			b.WriteString("\n" + ErrorStyle.Render(
+				fmt.Sprintf("✗ Failed (exit %d) after %s. Press any key to continue.", m.exitCode, fmtElapsed(m.elapsed)),
+			) + "\n")
 		}
 	} else {
 		hint := "Running..."
 		if m.isCreating {
 			hint = "Running... (esc to cancel)"
 		}
-		b.WriteString("\n" + MutedStyle.Render(m.spinner.View()+" "+hint) + "\n")
+		elapsedStr := MutedStyle.Render(fmtElapsed(m.elapsed))
+		b.WriteString("\n" + MutedStyle.Render(m.spinner.View()+" "+hint) + "  " + elapsedStr + "\n")
 	}
 
 	return lipgloss.NewStyle().Padding(1, 2).Render(b.String())

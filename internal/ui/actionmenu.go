@@ -164,9 +164,10 @@ func (m *ActionMenuModel) executeAction() (tea.Model, tea.Cmd) {
 
 	case "Start":
 		startCmd := m.client.StartVM(m.vm.Name)
-		logView := NewLogViewModel(
+		logView := NewLogViewModelWithHint(
 			m.client, startCmd,
 			fmt.Sprintf("Starting %s...", m.vm.Name),
+			"This operation may take 60 seconds or more.",
 			m.width, m.height,
 			func(exitCode int) tea.Msg {
 				return m.backToAction()()
