@@ -62,6 +62,18 @@ aisand wraps [limactl](https://github.com/lima-vm/lima) — the macOS VM manager
 go install github.com/japacx/aisand@latest
 ```
 
+After installing, make sure `~/go/bin` is in your PATH. If running `aisand` gives you `command not found`, add this to your `~/.zshrc` (or `~/.bashrc`):
+
+```sh
+export PATH="$HOME/go/bin:$PATH"
+```
+
+Then reload your shell:
+
+```sh
+source ~/.zshrc
+```
+
 Or build from source:
 
 ```sh
