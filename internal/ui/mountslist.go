@@ -127,15 +127,28 @@ func (m *UnmountPickerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					_ = m.client.StopVM(vmName)
 					_ = m.client.RemoveMount(vmName, remaining)
 					startCmd := m.client.StartVM(vmName)
-					logView := NewLogViewModel(
-						m.client, startCmd,
-						fmt.Sprintf("Restarting %s after unmount...", vmName),
-						m.width, m.height,
-						func(exitCode int) tea.Msg {
-							main := NewMainModel(m.client, m.width, m.height)
-							return ChangeScreenMsg{State: StateMain, Screen: main}
-						},
-					)
+				logView := NewLogViewModel(
+					m.client, startCmd,
+					fmt.Sprintf("Restarting %s after unmount...", vmName),
+					m.width, m.height,
+					func(exitCode int) tea.Msg {
+						client := m.client
+						width := m.width
+						height := m.height
+						vms, err := client.ListVMs()
+						vm := lima.VM{Name: vmName}
+						if err == nil {
+							for _, v := range vms {
+								if v.Name == vmName {
+									vm = v
+									break
+								}
+							}
+						}
+						action := NewActionMenuModel(client, vm, width, height)
+						return ChangeScreenMsg{State: StateActionMenu, Screen: action}
+					},
+				)
 					return ChangeScreenMsg{State: StateLogView, Screen: logView}
 				},
 				func() tea.Msg {
@@ -150,9 +163,23 @@ func (m *UnmountPickerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// VM is stopped — just remove the mount
 		_ = m.client.RemoveMount(vmName, remaining)
-		main := NewMainModel(m.client, m.width, m.height)
+		// Reload VM and go back to action menu
+		client := m.client
+		width := m.width
+		height := m.height
 		return m, func() tea.Msg {
-			return ChangeScreenMsg{State: StateMain, Screen: main}
+			vms, err := client.ListVMs()
+			vm := lima.VM{Name: vmName}
+			if err == nil {
+				for _, v := range vms {
+					if v.Name == vmName {
+						vm = v
+						break
+					}
+				}
+			}
+			action := NewActionMenuModel(client, vm, width, height)
+			return ChangeScreenMsg{State: StateActionMenu, Screen: action}
 		}
 
 	case "esc":

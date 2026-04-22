@@ -1,23 +1,23 @@
 #!/bin/bash
 set -e
 
-# Colors
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-ok() { echo -e "${GREEN}[✓]${NC} $1"; }
-info() { echo "[ ] $1"; }
+ok()   { echo -e "${GREEN}[✓]${NC} $1"; }
+info() { echo -e "${YELLOW}[ ]${NC} $1"; }
 
-# Install opencode via brew
-if brew list anomalyco/tap/opencode &>/dev/null 2>&1; then
-  ok "opencode already installed"
+# ── Install opencode ─────────────────────────────────────────────────────────
+if command -v opencode &>/dev/null; then
+  ok "opencode already installed ($(opencode --version 2>/dev/null || echo 'unknown version'))"
 else
   info "Installing opencode..."
-  brew install anomalyco/tap/opencode
+  curl -fsSL https://opencode.ai/install | bash
   ok "opencode installed"
 fi
 
-# Symlink ~/.config/opencode → host virtiofs mount
+# ── Config symlinks ──────────────────────────────────────────────────────────
 HOST_HOME=$(ls /Users 2>/dev/null | head -1)
 if [ -n "$HOST_HOME" ]; then
   CONFIG_SRC="/Users/$HOST_HOME/.config/opencode"

@@ -26,22 +26,55 @@ type ActionMenuModel struct {
 
 // NewActionMenuModel creates a new ActionMenuModel for the given VM.
 func NewActionMenuModel(client *lima.Client, vm lima.VM, width, height int) *ActionMenuModel {
+	stopped := vm.Status != "Running"
 	items := []actionItem{
 		{label: "Shell"},
 		{label: "Start", disabled: vm.Status == "Running"},
 		{label: "Stop", disabled: vm.Status == "Stopped"},
 		{label: "Delete"},
-		{label: "Install tool"},
-		{label: "Mount"},
-		{label: "Unmount"},
-		{label: "Mounts"},
+		{label: "Install tool", disabled: stopped},
+		{label: "Mount", disabled: stopped},
+		{label: "Unmount", disabled: stopped},
+		{label: "Mounts", disabled: stopped},
 	}
-	return &ActionMenuModel{
+	m := &ActionMenuModel{
 		client: client,
 		vm:     vm,
 		items:  items,
 		width:  width,
 		height: height,
+	}
+	// Ensure initial selection is on an enabled item
+	for i, item := range items {
+		if !item.disabled {
+			m.selected = i
+			break
+		}
+	}
+	return m
+}
+
+// backToAction returns a tea.Cmd that reloads the VM from limactl and transitions
+// back to the ActionMenu with fresh state. Used after any non-destructive operation.
+func (m *ActionMenuModel) backToAction() tea.Cmd {
+	client := m.client
+	vmName := m.vm.Name
+	width := m.width
+	height := m.height
+	return func() tea.Msg {
+		// Reload VM list to get fresh status
+		vms, err := client.ListVMs()
+		vm := lima.VM{Name: vmName} // fallback if reload fails
+		if err == nil {
+			for _, v := range vms {
+				if v.Name == vmName {
+					vm = v
+					break
+				}
+			}
+		}
+		action := NewActionMenuModel(client, vm, width, height)
+		return ChangeScreenMsg{State: StateActionMenu, Screen: action}
 	}
 }
 
@@ -62,9 +95,9 @@ func (m *ActionMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *ActionMenuModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
-		m.selected = (m.selected - 1 + len(m.items)) % len(m.items)
+		m.selected = m.prevEnabled(m.selected)
 	case "down", "j":
-		m.selected = (m.selected + 1) % len(m.items)
+		m.selected = m.nextEnabled(m.selected)
 	case "enter":
 		return m.executeAction()
 	case "esc":
@@ -76,6 +109,26 @@ func (m *ActionMenuModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// nextEnabled returns the index of the next enabled item after current, or current if none.
+func (m *ActionMenuModel) nextEnabled(current int) int {
+	for i := current + 1; i < len(m.items); i++ {
+		if !m.items[i].disabled {
+			return i
+		}
+	}
+	return current // already at last enabled, stay
+}
+
+// prevEnabled returns the index of the previous enabled item before current, or current if none.
+func (m *ActionMenuModel) prevEnabled(current int) int {
+	for i := current - 1; i >= 0; i-- {
+		if !m.items[i].disabled {
+			return i
+		}
+	}
+	return current // already at first enabled, stay
+}
+
 func (m *ActionMenuModel) executeAction() (tea.Model, tea.Cmd) {
 	item := m.items[m.selected]
 	if item.disabled {
@@ -84,7 +137,6 @@ func (m *ActionMenuModel) executeAction() (tea.Model, tea.Cmd) {
 
 	switch item.label {
 	case "Shell":
-		// If VM is stopped, start it first then shell
 		if m.vm.Status == "Stopped" {
 			startCmd := m.client.StartVM(m.vm.Name)
 			logView := NewLogViewModel(
@@ -93,26 +145,21 @@ func (m *ActionMenuModel) executeAction() (tea.Model, tea.Cmd) {
 				m.width, m.height,
 				func(exitCode int) tea.Msg {
 					if exitCode == 0 {
-						// After start, open shell
 						shellCmd := m.client.ShellVM(m.vm.Name)
 						return tea.ExecProcess(shellCmd, func(err error) tea.Msg {
-							main := NewMainModel(m.client, m.width, m.height)
-							return ChangeScreenMsg{State: StateMain, Screen: main}
+							return m.backToAction()()
 						})
 					}
-					main := NewMainModel(m.client, m.width, m.height)
-					return ChangeScreenMsg{State: StateMain, Screen: main}
+					return m.backToAction()()
 				},
 			)
 			return m, func() tea.Msg {
 				return ChangeScreenMsg{State: StateLogView, Screen: logView}
 			}
 		}
-		// VM is running — open shell directly
 		shellCmd := m.client.ShellVM(m.vm.Name)
 		return m, tea.ExecProcess(shellCmd, func(err error) tea.Msg {
-			main := NewMainModel(m.client, m.width, m.height)
-			return ChangeScreenMsg{State: StateMain, Screen: main}
+			return m.backToAction()()
 		})
 
 	case "Start":
@@ -122,8 +169,7 @@ func (m *ActionMenuModel) executeAction() (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Starting %s...", m.vm.Name),
 			m.width, m.height,
 			func(exitCode int) tea.Msg {
-				main := NewMainModel(m.client, m.width, m.height)
-				return ChangeScreenMsg{State: StateMain, Screen: main}
+				return m.backToAction()()
 			},
 		)
 		return m, func() tea.Msg {
@@ -131,23 +177,37 @@ func (m *ActionMenuModel) executeAction() (tea.Model, tea.Cmd) {
 		}
 
 	case "Stop":
+		stopCmd := m.client.StopVM2(m.vm.Name)
+		logView := NewLogViewModel(
+			m.client, stopCmd,
+			fmt.Sprintf("Stopping %s...", m.vm.Name),
+			m.width, m.height,
+			func(exitCode int) tea.Msg {
+				return m.backToAction()()
+			},
+		)
 		return m, func() tea.Msg {
-			_ = m.client.StopVM(m.vm.Name)
-			main := NewMainModel(m.client, m.width, m.height)
-			return ChangeScreenMsg{State: StateMain, Screen: main}
+			return ChangeScreenMsg{State: StateLogView, Screen: logView}
 		}
 
 	case "Delete":
 		confirm := NewConfirmModel(
 			fmt.Sprintf("Delete VM %q? This cannot be undone.", m.vm.Name),
 			func() tea.Msg {
-				_ = m.client.DeleteVM(m.vm.Name)
-				main := NewMainModel(m.client, m.width, m.height)
-				return ChangeScreenMsg{State: StateMain, Screen: main}
+				deleteCmd := m.client.DeleteVMCmd(m.vm.Name)
+				logView := NewLogViewModel(
+					m.client, deleteCmd,
+					fmt.Sprintf("Deleting %s...", m.vm.Name),
+					m.width, m.height,
+					func(exitCode int) tea.Msg {
+						main := NewMainModel(m.client, m.width, m.height)
+						return ChangeScreenMsg{State: StateMain, Screen: main}
+					},
+				)
+				return ChangeScreenMsg{State: StateLogView, Screen: logView}
 			},
 			func() tea.Msg {
-				main := NewMainModel(m.client, m.width, m.height)
-				return ChangeScreenMsg{State: StateMain, Screen: main}
+				return m.backToAction()()
 			},
 		)
 		return m, func() tea.Msg {
@@ -155,19 +215,9 @@ func (m *ActionMenuModel) executeAction() (tea.Model, tea.Cmd) {
 		}
 
 	case "Install tool":
-		// Get the embedded opencode script from the embed package
-		installCmd := m.client.InstallTool(m.vm.Name, getOpenCodeScript())
-		logView := NewLogViewModel(
-			m.client, installCmd,
-			fmt.Sprintf("Installing opencode on %s...", m.vm.Name),
-			m.width, m.height,
-			func(exitCode int) tea.Msg {
-				main := NewMainModel(m.client, m.width, m.height)
-				return ChangeScreenMsg{State: StateMain, Screen: main}
-			},
-		)
+		picker := NewToolPickerModel(m.client, m.vm, m.width, m.height)
 		return m, func() tea.Msg {
-			return ChangeScreenMsg{State: StateLogView, Screen: logView}
+			return ChangeScreenMsg{State: StateToolPicker, Screen: picker}
 		}
 
 	case "Mount":

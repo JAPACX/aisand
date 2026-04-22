@@ -18,6 +18,7 @@ const (
 	StateConfirm
 	StateMountsList
 	StateUnmountPicker
+	StateToolPicker
 )
 
 // App is the root Bubbletea model. It holds the current screen and delegates
@@ -37,9 +38,9 @@ func NewApp(client *lima.Client) *App {
 	}
 }
 
-// Init checks for limactl and sets the initial screen.
+// Init checks for brew + limactl and sets the initial screen.
 func (a *App) Init() tea.Cmd {
-	if !a.limaClient.IsLimactlInstalled() {
+	if !a.limaClient.IsBrewInstalled() || !a.limaClient.IsLimactlInstalled() {
 		a.state = StateSetup
 		setup := NewSetupModel(a.limaClient)
 		a.currentScreen = setup
@@ -73,6 +74,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ChangeScreenMsg:
 		return a.handleScreenChange(msg)
+
+	case resumeLogViewMsg:
+		// Restore the log view as the current screen (user chose not to cancel)
+		a.state = StateLogView
+		a.currentScreen = msg.logView
+		return a, nil
 	}
 
 	// Delegate to current screen

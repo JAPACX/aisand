@@ -39,7 +39,7 @@ func (m *ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.onConfirm != nil {
 				return m, func() tea.Msg { return m.onConfirm() }
 			}
-		case "n", "N", "esc":
+		case "n", "N":
 			if m.onCancel != nil {
 				return m, func() tea.Msg { return m.onCancel() }
 			}

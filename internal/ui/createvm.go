@@ -281,15 +281,27 @@ func (m *CreateVMModel) startCreation() (tea.Model, tea.Cmd) {
 	templatePath := tmpFile.Name()
 
 	createCmd := m.client.CreateVM(name, cpus, ram, disk, m.mounts, templatePath)
-	logView := NewLogViewModel(
-		m.client, createCmd,
-		fmt.Sprintf("Creating VM %q...", name),
+	logView := NewCreationLogViewModel(
+		m.client, createCmd, name,
 		m.width, m.height,
 		func(exitCode int) tea.Msg {
-			// Clean up temp file
 			os.Remove(templatePath)
-			main := NewMainModel(m.client, m.width, m.height)
-			return ChangeScreenMsg{State: StateMain, Screen: main}
+			client := m.client
+			width := m.width
+			height := m.height
+			// Reload VM list and go to action menu of the new VM
+			vms, err := client.ListVMs()
+			vm := lima.VM{Name: name}
+			if err == nil {
+				for _, v := range vms {
+					if v.Name == name {
+						vm = v
+						break
+					}
+				}
+			}
+			action := NewActionMenuModel(client, vm, width, height)
+			return ChangeScreenMsg{State: StateActionMenu, Screen: action}
 		},
 	)
 

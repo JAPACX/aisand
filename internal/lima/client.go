@@ -117,7 +117,12 @@ func (c *Client) StartVM(name string) *exec.Cmd {
 	return exec.Command("limactl", "start", name)
 }
 
-// StopVM stops a running VM.
+// StopVM2 returns a command to stop a VM (for streaming output).
+func (c *Client) StopVM2(name string) *exec.Cmd {
+	return exec.Command("limactl", "stop", name)
+}
+
+// StopVM stops a running VM (blocking, used internally).
 func (c *Client) StopVM(name string) error {
 	out, err := exec.Command("limactl", "stop", name).CombinedOutput()
 	if err != nil {
@@ -126,7 +131,7 @@ func (c *Client) StopVM(name string) error {
 	return nil
 }
 
-// DeleteVM stops the VM if running, then deletes it.
+// DeleteVM stops the VM if running, then deletes it (blocking, used internally).
 func (c *Client) DeleteVM(name string) error {
 	// Try to stop first (ignore error if already stopped)
 	_ = exec.Command("limactl", "stop", name).Run()
@@ -135,6 +140,12 @@ func (c *Client) DeleteVM(name string) error {
 		return fmt.Errorf("limactl delete %s failed: %w\n%s", name, err, out)
 	}
 	return nil
+}
+
+// DeleteVMCmd returns a command to delete a VM (for streaming output).
+// Uses --force so limactl handles stop+delete in one pass.
+func (c *Client) DeleteVMCmd(name string) *exec.Cmd {
+	return exec.Command("limactl", "delete", "--force", name)
 }
 
 // CreateVM returns a command to create a VM (for streaming output).
