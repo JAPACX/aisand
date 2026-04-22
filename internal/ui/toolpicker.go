@@ -68,7 +68,7 @@ func (m *ToolPickerModel) checkToolsCmd() tea.Cmd {
 	return func() tea.Msg {
 		status := map[string]bool{}
 		checkScript := `
-export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$HOME/.opencode/bin:$HOME/.local/bin:$HOME/bin:$PATH"
 if command -v brew &>/dev/null; then echo "brew:installed"; else echo "brew:missing"; fi
 if command -v opencode &>/dev/null; then echo "opencode:installed"; else echo "opencode:missing"; fi
 `
