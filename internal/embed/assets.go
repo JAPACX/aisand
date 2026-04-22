@@ -11,3 +11,8 @@ var AgentYAML []byte
 //
 //go:embed scripts/opencode.sh
 var OpenCodeScript []byte
+
+// BrewScript is the embedded Homebrew installation script.
+//
+//go:embed scripts/brew.sh
+var BrewScript []byte

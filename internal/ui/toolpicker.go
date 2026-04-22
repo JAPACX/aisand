@@ -20,8 +20,13 @@ type tool struct {
 // availableTools is the registry of installable tools.
 var availableTools = []tool{
 	{
+		name:        "brew",
+		description: "Homebrew package manager (required for many tools)",
+		script:      func() []byte { return embed.BrewScript },
+	},
+	{
 		name:        "opencode",
-		description: "AI coding agent (brew install + config symlinks)",
+		description: "AI coding agent (curl install + config symlinks)",
 		script:      func() []byte { return embed.OpenCodeScript },
 	},
 }
@@ -61,16 +66,21 @@ func (m *ToolPickerModel) checkToolsCmd() tea.Cmd {
 	return func() tea.Msg {
 		status := map[string]bool{}
 		checkScript := `
+export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+if command -v brew &>/dev/null; then echo "brew:installed"; else echo "brew:missing"; fi
 if command -v opencode &>/dev/null; then echo "opencode:installed"; else echo "opencode:missing"; fi
 `
 		cmd := client.InstallTool(vmName, []byte(checkScript))
 		out, err := cmd.Output()
 		if err == nil {
 			for _, line := range strings.Split(string(out), "\n") {
-				if strings.Contains(line, "opencode:installed") {
-					status["opencode"] = true
-				} else if strings.Contains(line, "opencode:missing") {
-					status["opencode"] = false
+				line = strings.TrimSpace(line)
+				for _, t := range availableTools {
+					if line == t.name+":installed" {
+						status[t.name] = true
+					} else if line == t.name+":missing" {
+						status[t.name] = false
+					}
 				}
 			}
 		}
