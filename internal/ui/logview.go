@@ -274,7 +274,7 @@ func (m *LogViewModel) View() string {
 	b.WriteString("\n")
 
 	if !m.done && len(m.lines) == 0 {
-		b.WriteString(m.spinner.View() + " " + MutedStyle.Render("Waiting for output...") + "\n")
+		b.WriteString(m.spinner.View() + " " + MutedStyle.Render("This operation may take a moment, please wait.") + "\n")
 	} else {
 		b.WriteString(m.viewport.View() + "\n")
 	}

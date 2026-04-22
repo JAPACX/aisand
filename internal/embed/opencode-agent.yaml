@@ -3,13 +3,18 @@
 #
 # Ubuntu 25.10 with cloud-init provisioning:
 # - Linuxbrew, Python 3, Go LTS, Node.js LTS pre-installed at first boot
-# - Host home directory mounted read-only
+# - Host home directory mounted read-only via virtiofs (better inotify support)
 
 images:
   - location: "https://cloud-images.ubuntu.com/releases/questing/release/ubuntu-25.10-server-cloudimg-arm64.img"
     arch: "aarch64"
   - location: "https://cloud-images.ubuntu.com/releases/questing/release/ubuntu-25.10-server-cloudimg-amd64.img"
     arch: "x86_64"
+
+# virtiofs provides better performance and inotify support vs 9p/sshfs.
+# Requires macOS 13+ with Virtualization.framework (vmType: vz).
+vmType: vz
+mountType: virtiofs
 
 mounts:
   - location: "~"
