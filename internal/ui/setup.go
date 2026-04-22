@@ -2,10 +2,10 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/japacx/aisand/internal/lima"
@@ -20,26 +20,27 @@ const (
 	setupStateConfigCPUs
 	setupStateConfigRAM
 	setupStateConfigDisk
+	setupStateAlreadyInstalled
 	setupStateDone
 )
 
-// SetupModel is the onboarding screen shown when limactl is not installed.
+// SetupModel is the onboarding screen shown when brew or limactl is not installed.
 type SetupModel struct {
 	client       *lima.Client
 	subState     setupSubState
 	brewMissing  bool
 	limaMissing  bool
-	logLines     []string
 	installDone  bool
 	installError string
+	spinner      spinner.Model
 
 	// Resource config selections
-	cpuOptions  []int
-	ramOptions  []int
+	cpuOptions []int
+	ramOptions []int
 	diskOptions []int
-	cpuIdx      int
-	ramIdx      int
-	diskIdx     int
+	cpuIdx     int
+	ramIdx     int
+	diskIdx    int
 
 	width  int
 	height int
@@ -60,26 +61,33 @@ func NewSetupModel(client *lima.Client) *SetupModel {
 		cpuOptions[i] = i + 1
 	}
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
+
 	return &SetupModel{
 		client:      client,
 		brewMissing: !client.IsBrewInstalled(),
 		limaMissing: !client.IsLimactlInstalled(),
+		spinner:     s,
 		cpuOptions:  cpuOptions,
 		ramOptions:  []int{1, 2, 4, 8},
 		diskOptions: []int{20, 40, 60, 80, 100},
-		cpuIdx:      len(cpuOptions) - 1, // default: max
-		ramIdx:      2,                   // default: 4 GB
-		diskIdx:     2,                   // default: 60 GB
+		cpuIdx:      len(cpuOptions) - 1,
+		ramIdx:      2,
+		diskIdx:     2,
 	}
 }
-
-// logLineMsg carries a new log line from a subprocess.
-type logLineMsg struct{ line string }
 
 // installDoneMsg signals that an install subprocess finished.
 type installDoneMsg struct{ exitCode int }
 
 func (m *SetupModel) Init() tea.Cmd {
+	// If everything is already installed, show the "already installed" screen
+	if !m.brewMissing && !m.limaMissing {
+		m.subState = setupStateAlreadyInstalled
+		return nil
+	}
 	m.subState = setupStateCheck
 	return nil
 }
@@ -90,26 +98,29 @@ func (m *SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+	case spinner.TickMsg:
+		if m.subState == setupStateInstalling {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
-	case logLineMsg:
-		m.logLines = append(m.logLines, msg.line)
-
 	case installDoneMsg:
-		if msg.exitCode == 0 {
-			// Re-check after install
-			m.brewMissing = !m.client.IsBrewInstalled()
-			m.limaMissing = !m.client.IsLimactlInstalled()
-			if !m.limaMissing {
-				m.installDone = true
-				m.subState = setupStateConfigCPUs
-			} else {
-				m.installError = "Installation failed — limactl still not found"
-				m.subState = setupStateConfirm
-			}
+		// Re-check after install
+		m.brewMissing = !m.client.IsBrewInstalled()
+		m.limaMissing = !m.client.IsLimactlInstalled()
+		if msg.exitCode == 0 && !m.limaMissing {
+			m.installDone = true
+			m.subState = setupStateConfigCPUs
 		} else {
-			m.installError = fmt.Sprintf("Installation failed (exit %d)", msg.exitCode)
+			if msg.exitCode != 0 {
+				m.installError = fmt.Sprintf("Installation failed (exit %d). Press y to retry.", msg.exitCode)
+			} else {
+				m.installError = "Lima still not found after install. Press y to retry."
+			}
 			m.subState = setupStateConfirm
 		}
 	}
@@ -118,19 +129,28 @@ func (m *SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.subState {
+	case setupStateAlreadyInstalled:
+		// Only allow going back to main
+		switch msg.String() {
+		case "q", "esc", "enter":
+			main := NewMainModel(m.client, m.width, m.height)
+			return m, func() tea.Msg {
+				return ChangeScreenMsg{State: StateMain, Screen: main}
+			}
+		}
+
 	case setupStateCheck, setupStateConfirm:
 		switch msg.String() {
 		case "y", "Y", "enter":
 			m.subState = setupStateInstalling
-			m.logLines = nil
 			m.installError = ""
-			return m, m.runInstall()
+			return m, tea.Batch(m.spinner.Tick, m.runInstall())
 		case "n", "N", "q", "esc":
 			return m, tea.Quit
 		}
 
 	case setupStateInstalling:
-		// No key handling during install
+		// Block all keys during install
 
 	case setupStateConfigCPUs:
 		switch msg.String() {
@@ -144,8 +164,6 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			m.subState = setupStateConfigRAM
-		case "esc":
-			m.subState = setupStateConfigCPUs
 		}
 
 	case setupStateConfigRAM:
@@ -175,7 +193,6 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.diskIdx++
 			}
 		case "enter":
-			// Save defaults and transition to main
 			cpus := m.cpuOptions[m.cpuIdx]
 			ram := m.ramOptions[m.ramIdx]
 			disk := m.diskOptions[m.diskIdx]
@@ -191,76 +208,77 @@ func (m *SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// runInstall runs brew install (if needed) then lima install, streaming output.
+// runInstall installs missing dependencies idempotently.
 func (m *SetupModel) runInstall() tea.Cmd {
+	brewMissing := m.brewMissing
+	limaMissing := m.limaMissing
 	return func() tea.Msg {
 		// Step 1: Install Homebrew if missing
-		if m.brewMissing {
+		if brewMissing {
 			cmd := exec.Command("bash", "-c",
 				`NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`)
-			if err := streamCmd(cmd); err != nil {
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+			if err := cmd.Run(); err != nil {
 				return installDoneMsg{exitCode: 1}
 			}
 		}
-		// Step 2: Install Lima via brew
-		cmd := exec.Command("brew", "install", "lima")
-		if err := streamCmd(cmd); err != nil {
-			return installDoneMsg{exitCode: 1}
+		// Step 2: Install Lima via brew if missing
+		if limaMissing {
+			cmd := exec.Command("brew", "install", "lima")
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+			if err := cmd.Run(); err != nil {
+				return installDoneMsg{exitCode: 1}
+			}
 		}
 		return installDoneMsg{exitCode: 0}
 	}
 }
 
-// streamCmd runs a command and discards output (simplified for non-streaming context).
-// In a real TUI, output would be sent via tea.Cmd channels.
-func streamCmd(cmd *exec.Cmd) error {
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
 func (m *SetupModel) View() string {
 	var b strings.Builder
 
-	title := TitleStyle.Render("aisand — Host Setup Required")
-	b.WriteString(title + "\n\n")
+	b.WriteString(TitleStyle.Render("aisand — Host Setup") + "\n\n")
 
 	switch m.subState {
+	case setupStateAlreadyInstalled:
+		b.WriteString(RunningBadgeStyle.Render("  ✓ Homebrew (brew) — installed") + "\n")
+		b.WriteString(RunningBadgeStyle.Render("  ✓ Lima (limactl) — installed") + "\n\n")
+		b.WriteString(RunningBadgeStyle.Render("All dependencies are installed.") + "\n\n")
+		b.WriteString(MutedStyle.Render("Press ") + KeyHintStyle.Render("q") + MutedStyle.Render(" or ") + KeyHintStyle.Render("esc") + MutedStyle.Render(" to go back.") + "\n")
+
 	case setupStateCheck, setupStateConfirm:
-		b.WriteString("The following dependencies are required:\n\n")
+		b.WriteString("The following dependencies are required to use aisand:\n\n")
 		if m.brewMissing {
-			b.WriteString(ErrorStyle.Render("  ✗ Homebrew (brew) — not found") + "\n")
+			b.WriteString(ErrorStyle.Render("  ✗ Homebrew (brew)  — not found") + "\n")
 		} else {
-			b.WriteString(RunningBadgeStyle.Render("  ✓ Homebrew (brew) — found") + "\n")
+			b.WriteString(RunningBadgeStyle.Render("  ✓ Homebrew (brew)  — installed") + "\n")
 		}
 		if m.limaMissing {
-			b.WriteString(ErrorStyle.Render("  ✗ Lima (limactl) — not found") + "\n")
+			b.WriteString(ErrorStyle.Render("  ✗ Lima (limactl)   — not found") + "\n")
 		} else {
-			b.WriteString(RunningBadgeStyle.Render("  ✓ Lima (limactl) — found") + "\n")
+			b.WriteString(RunningBadgeStyle.Render("  ✓ Lima (limactl)   — installed") + "\n")
 		}
 		b.WriteString("\n")
 		if m.installError != "" {
 			b.WriteString(ErrorStyle.Render(m.installError) + "\n\n")
 		}
-		b.WriteString("Press " + KeyHintStyle.Render("y") + " to install, " + KeyHintStyle.Render("n") + " to quit.\n")
+		b.WriteString("Press " + KeyHintStyle.Render("y") + " to install missing dependencies, " + KeyHintStyle.Render("n") + " to quit.\n")
 
 	case setupStateInstalling:
-		b.WriteString("Installing dependencies...\n\n")
-		// Show last 20 log lines
-		start := 0
-		if len(m.logLines) > 20 {
-			start = len(m.logLines) - 20
+		b.WriteString(m.spinner.View() + " Installing dependencies — this may take a few minutes...\n\n")
+		if m.brewMissing {
+			b.WriteString(MutedStyle.Render("  • Installing Homebrew") + "\n")
 		}
-		for _, line := range m.logLines[start:] {
-			b.WriteString(LogLineStyle.Render(line) + "\n")
+		if m.limaMissing {
+			b.WriteString(MutedStyle.Render("  • Installing Lima (limactl)") + "\n")
 		}
-		if m.installDone {
-			b.WriteString("\n" + RunningBadgeStyle.Render("✓ Installation complete!") + "\n")
-		}
+		b.WriteString("\n" + MutedStyle.Render("Please wait. Do not close this window.") + "\n")
 
 	case setupStateConfigCPUs:
-		b.WriteString(RunningBadgeStyle.Render("✓ Lima installed successfully!") + "\n\n")
-		b.WriteString("Configure default VM resources:\n\n")
+		b.WriteString(RunningBadgeStyle.Render("✓ Dependencies installed successfully!") + "\n\n")
+		b.WriteString("Now configure default VM resources:\n\n")
 		b.WriteString(TitleStyle.Render("Default CPUs:") + "\n")
 		for i, v := range m.cpuOptions {
 			if i == m.cpuIdx {
