@@ -28,7 +28,7 @@ type ActionMenuModel struct {
 func NewActionMenuModel(client *lima.Client, vm lima.VM, width, height int) *ActionMenuModel {
 	stopped := vm.Status != "Running"
 	items := []actionItem{
-		{label: "Shell"},
+		{label: "Shell", disabled: stopped},
 		{label: "Start", disabled: vm.Status == "Running"},
 		{label: "Stop", disabled: vm.Status == "Stopped"},
 		{label: "Delete"},
