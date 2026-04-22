@@ -1,0 +1,30 @@
+# Lima VM template — opencode agent
+# Managed by aisand — do not edit manually
+#
+# Ubuntu 25.10 with cloud-init provisioning:
+# - Linuxbrew, Python 3, Go LTS, Node.js LTS pre-installed at first boot
+# - Host home directory mounted read-only
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/questing/release/ubuntu-25.10-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/questing/release/ubuntu-25.10-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+mounts:
+  - location: "~"
+    writable: false
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      apt-get update -y
+      apt-get install -y curl git build-essential procps file
+      NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      apt-get install -y python3 python3-pip python3-venv
+      snap install go --classic
+      curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+      apt-get install -y nodejs
+      echo 'PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/snap/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' > /etc/environment
