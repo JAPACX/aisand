@@ -105,12 +105,22 @@ type ChangeScreenMsg struct {
 	Screen tea.Model
 }
 
-// handleScreenChange transitions to a new screen.
+// handleScreenChange transitions to a new screen and propagates current terminal size.
 func (a *App) handleScreenChange(msg ChangeScreenMsg) (tea.Model, tea.Cmd) {
 	a.state = msg.State
 	a.currentScreen = msg.Screen
-	if msg.Screen != nil {
-		return a, msg.Screen.Init()
+	if msg.Screen == nil {
+		return a, nil
 	}
-	return a, nil
+	initCmd := msg.Screen.Init()
+	// If we have a known terminal size, send it immediately to the new screen
+	if a.width > 0 && a.height > 0 {
+		newScreen, sizeCmd := msg.Screen.Update(tea.WindowSizeMsg{
+			Width:  a.width,
+			Height: a.height,
+		})
+		a.currentScreen = newScreen
+		return a, tea.Batch(initCmd, sizeCmd)
+	}
+	return a, initCmd
 }
